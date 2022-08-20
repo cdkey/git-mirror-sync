@@ -18,7 +18,7 @@ REMOTE="origin"
 DRY_RUN="0"
 
 REMOTE_BRANCH_LIST=($(git branch -r | grep -v '\->' | grep "${REMOTE}/"))
-TAG_LIST=($(git tag -l | grep -v '^last-sync/'))
+TAG_LIST=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g'))
 
 function tag_last_sync()
 {
@@ -36,12 +36,12 @@ function tag_last_sync()
 
     # save tags as msg
     local tagmsg="$(printf "%s\n" "${TAG_LIST[@]}")"
-    cmd="git tag -f -a -m \"\$tagmsg\" last-sync/tag-list ${REMOTE}/HEAD"
+    cmd="git tag -f -a -F - last-sync/tag-list ${REMOTE}/HEAD"
     if [ "$DRY_RUN" = "1" ]; then
         echo "$tagmsg"
         echo "$cmd"
     else
-        eval "$cmd"
+        echo "$tagmsg" | eval "$cmd"
     fi
 }
 
@@ -75,7 +75,7 @@ function create_inc_bundle()
     local rev_list=()
     rev_list+=($(for i in "${last_branch_list[@]}"; do echo "last-sync/${i}..${i}"; done))
     rev_list+=("${new_branch_list[@]}")
-    rev_list+=($(for i in "${new_tag_list[@]}"; do echo "tags/${i}"; done))
+    rev_list+=($(for i in "${new_tag_list[@]}"; do echo "tags/${i#*:}"; done))
     rev_list+=("$@")
     local cmd="git bundle create ${bundle_file} ${rev_list[@]}"
     if [ "$DRY_RUN" = "1" ]; then
