@@ -31,7 +31,7 @@ function tag_last_sync()
             echo "$cmd"
         else
             eval "$cmd"
-	    fi
+        fi
     done
 
     # save tags as msg
@@ -85,6 +85,50 @@ function create_inc_bundle()
     eval "$cmd" && git bundle list-heads ${bundle_file}
 }
 
+function export_position()
+{
+    local pos_file="${1:-/dev/stdout}"
+    shift
+    [ -z "$pos_file" ] && help
+    echo "[branch]" > "$pos_file"
+    local i
+    for i in "${REMOTE_BRANCH_LIST[@]}"; do
+        git show-ref refs/remotes/${i} | sed 's, refs/remotes/,:,g' >> "$pos_file"
+    done
+    echo "[tag]" >> "$pos_file"
+    git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' >> "$pos_file"
+}
+
+function import_position()
+{
+    local pos_file="${1:-/dev/stdin}"
+    shift
+    [ -z "$pos_file" ] && help
+    local content="$(cat $pos_file)"
+    local line cmd
+    while read line; do
+        local hash="${line%:*}"
+        local branch="${line#*:}"
+
+        cmd="git tag -f last-sync/${branch} ${hash}"
+        if [ "$DRY_RUN" = "1" ]; then
+            echo "$cmd"
+        else
+            eval "$cmd"
+        fi
+    done <<< $(echo "${content}" | sed -n '/\[branch\]/,/\[tag\]/p' | grep -vE '\[|\]')
+
+    # save tags as msg
+    local tagmsg="$(echo "${content}" | sed -n '/\[tag\]/,$p' | grep -vE '\[|\]')"
+    cmd="git tag -f -a -F - last-sync/tag-list ${REMOTE}/HEAD"
+    if [ "$DRY_RUN" = "1" ]; then
+        echo "$tagmsg"
+        echo "$cmd"
+    else
+        echo "$tagmsg" | eval "$cmd"
+    fi
+}
+
 function help()
 {
     echo "Usage: $0 [-n] ACTION [arg...]"
@@ -98,6 +142,8 @@ function help()
     echo "       full BUNDLE_FILE   make full bundle save to BUNDLE_FILE"
     echo "       inc  BUNDLE_FILE   make inc bundle save to BUNDLE_FILE, range is (last, current]"
     echo "       tag                mark current position as last"
+    echo "       export [FILE]      export current position to FILE (default to stdout)"
+    echo "       import [FILE]      import current position from FILE (default from stdin)"
     exit 0
 }
 
@@ -116,6 +162,8 @@ function main()
     inc)  create_inc_bundle "$@" ;;
     list-branch) printf "%s\n" "${REMOTE_BRANCH_LIST[@]}" ;;
     list-tags)   printf "%s\n" "${TAG_LIST[@]}" ;;
+    export) export_position "$@" ;;
+    import) import_position "$@" ;;
     *)    help ;;
     esac
 }

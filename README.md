@@ -139,3 +139,28 @@
     git push gogs
     ```
 
+### 导入导出同步点
+
+使用场景举例
+
+- 原外网 A 主机 git 仓库被破坏，丢失了之前的同步位置信息
+- 在外网 A' 主机新建了 git 仓库，后续期望增量同步从 A' 仓库生成
+
+操作方法
+
+1. 在内网 B 主机导出已同步的位置信息
+
+  ```bash
+  git-mirror-sync.sh export pos.txt
+  ```
+
+2. 拷贝pos.txt或复制内容
+
+3. 在外网 A 或 A' 仓库导入同步位置信息
+
+  ```bash
+  git-mirror-sync.sh import pos.txt
+  ```
+
+完成后即可像之前一样继续增量同步仓库数据
+
