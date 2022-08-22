@@ -18,7 +18,7 @@ REMOTE="origin"
 DRY_RUN="0"
 
 REMOTE_BRANCH_LIST=($(git branch -r | grep -v '\->' | grep "${REMOTE}/"))
-TAG_LIST=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g'))
+TAG_LIST=($(git ls-remote --refs --tags ${REMOTE} | grep -v '\trefs/tags/last-sync/' | sed 's,\trefs/tags/,:,g'))
 
 function tag_last_sync()
 {
@@ -96,7 +96,7 @@ function export_position()
         git show-ref refs/remotes/${i} | sed 's, refs/remotes/,:,g' >> "$pos_file"
     done
     echo "[tag]" >> "$pos_file"
-    git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' >> "$pos_file"
+    git ls-remote --refs --tags ${REMOTE} | grep -v '\trefs/tags/last-sync/' | sed 's,\trefs/tags/,:,g' >> "$pos_file"
 }
 
 function import_position()
