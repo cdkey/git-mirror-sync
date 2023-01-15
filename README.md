@@ -109,6 +109,7 @@
 
   ```bash
   git remote update origin
+  git fetch --tags -f origin
   ```
 
   git 输出信息表明哪些远程分支有更新，以及新增了哪些 tag
