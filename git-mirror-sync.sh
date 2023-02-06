@@ -17,14 +17,46 @@
 REMOTE="origin"
 DRY_RUN="0"
 
-REMOTE_BRANCH_LIST=($(git branch -r | grep -v '\->' | grep "${REMOTE}/"))
-TAG_LIST=($(git ls-remote --refs --tags ${REMOTE} | grep -v '\trefs/tags/last-sync/' | sed 's,\trefs/tags/,:,g'))
+function get_remote_branch_list()
+{
+    git branch -r | grep -v '\->' | grep "^ *${REMOTE}/" | sed 's,^ *,,' | grep -v '^$'
+}
+
+function get_synced_branch_list()
+{
+    git tag -l | grep "^last-sync/${REMOTE}/" | sed 's,^last-sync/,,' | grep -v '^$'
+}
+
+function get_remote_tag_list()
+{
+    #realtime remote tags
+    local remote_tags_name=($(git ls-remote --refs --tags "${REMOTE}" | grep -v '\trefs/tags/last-sync/' | sed 's,.*\trefs/tags/,,' | grep -v '^$'))
+    local local_remote_tags=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$'))
+    local filter_rule="$(printf ":%s\$|" "${remote_tags_name[@]}")"
+    printf "%s\n" "${local_remote_tags[@]}" | grep -E "${filter_rule%|}"
+}
+
+function get_synced_tag_list()
+{
+    if git show-ref --verify --quiet refs/tags/last-sync/tag-list >/dev/null 2>&1 ; then
+        git tag -l --format='%(contents)' last-sync/tag-list
+    fi
+}
+
+function diff_inc()
+{
+    local file1="${1:-/dev/stdin}"
+    local file2="${2:-/dev/stdin}"
+
+    diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" <(cat "$file1" | sort) <(cat "$file2" | sort) | grep -v '^$'
+}
 
 function tag_last_sync()
 {
     local cmd
     local branch
-    for branch in "${REMOTE_BRANCH_LIST[@]}"
+    local remote_branch_list=($(get_remote_branch_list))
+    for branch in "${remote_branch_list[@]}"
     do
         cmd="git tag -f last-sync/${branch} ${branch}"
         if [ "$DRY_RUN" = "1" ]; then
@@ -35,13 +67,16 @@ function tag_last_sync()
     done
 
     # save tags as msg
-    local tagmsg="$(printf "%s\n" "${TAG_LIST[@]}")"
+    local newtagmsg="$(get_remote_tag_list)"
+    local curtagmsg="$(get_synced_tag_list)"
     cmd="git tag -f -a -F - last-sync/tag-list ${REMOTE}/HEAD"
     if [ "$DRY_RUN" = "1" ]; then
-        echo "$tagmsg"
+        echo "$newtagmsg"
         echo "$cmd"
     else
-        echo "$tagmsg" | eval "$cmd"
+        if [ "$newtagmsg" != "$curtagmsg" ]; then
+            echo "$newtagmsg" | eval "$cmd"
+        fi
     fi
 }
 
@@ -50,8 +85,7 @@ function create_full_bundle()
     local bundle_file="$1"
     shift
     [ -z "$bundle_file" ] && help
-    local branch_list=("${REMOTE_BRANCH_LIST[@]}")
-    local rev_list=("${branch_list[@]}")
+    local rev_list=($(get_remote_branch_list))
     rev_list+=("$@")
     local cmd="git bundle create ${bundle_file} --exclude=refs/tags/last-sync/* --tags=* ${rev_list[@]}"
     if [ "$DRY_RUN" = "1" ]; then
@@ -66,14 +100,13 @@ function create_inc_bundle()
     local bundle_file="$1"
     shift
     [ -z "$bundle_file" ] && help
-    local now_branch_list=("${REMOTE_BRANCH_LIST[@]}")
-    local last_branch_list=($(git tag -l | grep "^last-sync/${REMOTE}/" | sed 's,^last-sync/,,'))
-    local new_branch_list=($(diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" <(printf "%s\n" "${last_branch_list[@]}" | sort) <(printf "%s\n" "${now_branch_list[@]}" | sort)  | grep -v '^$'))
-    local last_tag_list=($(git describe --tags last-sync/tag-list >/dev/null 2>&1 && git tag -l --format='%(contents)' last-sync/tag-list))
-    local new_tag_list=($(diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" <(printf "%s\n" "${last_tag_list[@]}" | sort) <(printf "%s\n" "${TAG_LIST[@]}" | sort)  | grep -v '^$'))
+    local remote_branch_list=($(get_remote_branch_list))
+    local synced_branch_list=($(get_synced_branch_list))
+    local new_branch_list=($(diff_inc <(printf "%s\n" "${synced_branch_list[@]}") <(printf "%s\n" "${remote_branch_list[@]}")))
+    local new_tag_list=($(diff_inc <(get_synced_tag_list) <(get_remote_tag_list)))
 
     local rev_list=()
-    rev_list+=($(for i in "${last_branch_list[@]}"; do echo "last-sync/${i}..${i}"; done))
+    rev_list+=($(for i in "${synced_branch_list[@]}"; do git show-ref --verify --quiet refs/remotes/${i} >/dev/null 2>&1 && echo "last-sync/${i}..${i}"; done))
     rev_list+=("${new_branch_list[@]}")
     rev_list+=($(for i in "${new_tag_list[@]}"; do echo "tags/${i#*:}"; done))
     rev_list+=("$@")
@@ -92,11 +125,12 @@ function export_position()
     [ -z "$pos_file" ] && help
     echo "[branch]" > "$pos_file"
     local i
-    for i in "${REMOTE_BRANCH_LIST[@]}"; do
-        git show-ref refs/remotes/${i} | sed 's, refs/remotes/,:,g' >> "$pos_file"
-    done
+    local remote_branch_list=($(get_remote_branch_list))
+    for i in "${remote_branch_list[@]}"; do
+        git show-ref refs/remotes/${i} | sed 's, refs/remotes/,:,g'
+    done >> "$pos_file"
     echo "[tag]" >> "$pos_file"
-    git ls-remote --refs --tags ${REMOTE} | grep -v '\trefs/tags/last-sync/' | sed 's,\trefs/tags/,:,g' >> "$pos_file"
+    git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$' >> "$pos_file"
 }
 
 function import_position()
@@ -129,6 +163,37 @@ function import_position()
     fi
 }
 
+function do_list_branch()
+{
+    echo "Remote ${REMOTE} branch:"
+    get_remote_branch_list
+
+    echo ""
+
+    echo "Deleted synced branch:"
+    diff_inc <(get_remote_branch_list) <(get_synced_branch_list)
+}
+
+function do_list_tags()
+{
+    echo "Remote ${REMOTE} tags:"
+    get_remote_tag_list
+}
+
+function do_prune_tags()
+{
+    local deleted_branch_list=($(diff_inc <(get_remote_branch_list) <(get_synced_branch_list)))
+    local branch
+    for branch in "${deleted_branch_list[@]}" ; do
+        local cmd="git tag -d last-sync/${branch}"
+        if [ "$DRY_RUN" = "1" ]; then
+            echo "$cmd"
+        else
+            eval "$cmd"
+        fi
+    done
+}
+
 function help()
 {
     echo "Usage: $0 [-n] ACTION [arg...]"
@@ -138,10 +203,11 @@ function help()
     echo ""
     echo "ACTION:"
     echo "       list-branch        show remote branch"
-    echo "       list-tags          show tags"
+    echo "       list-tags          show remote tags"
     echo "       full BUNDLE_FILE   make full bundle save to BUNDLE_FILE"
     echo "       inc  BUNDLE_FILE   make inc bundle save to BUNDLE_FILE, range is (last, current]"
     echo "       tag                mark current position as last"
+    echo "       prune-tags         prune deleted synced tags"
     echo "       export [FILE]      export current position to FILE (default to stdout)"
     echo "       import [FILE]      import current position from FILE (default from stdin)"
     exit 0
@@ -160,8 +226,9 @@ function main()
     tag)  tag_last_sync ;;
     full) create_full_bundle "$@" ;;
     inc)  create_inc_bundle "$@" ;;
-    list-branch) printf "%s\n" "${REMOTE_BRANCH_LIST[@]}" ;;
-    list-tags)   printf "%s\n" "${TAG_LIST[@]}" ;;
+    list-branch) do_list_branch "$@" ;;
+    list-tags)   do_list_tags "$@" ;;
+    prune-tags)  do_prune_tags "$@" ;;
     export) export_position "$@" ;;
     import) import_position "$@" ;;
     *)    help ;;
