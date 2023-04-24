@@ -97,13 +97,16 @@
 ### 增量同步
 
 - 在外网 A 主机 git 仓库记录前一次全量/增量同步的位置 (**特别注意: 一定要在A主机 git 仓库更新前标记位置**)
-  该操作将原始仓库的branch和tag信息以内部tag的方式保存到`last-sync/*`
+
+  该操作将原始仓库的branch和tag信息以内部tag的方式保存到`last-sync/snapshot-0`
+
+  同时滚动备份之前的位置信息到`last-sync/snapshot-1`~`last-sync/snapshot-9`
 
   ```bash
   git-mirror-sync.sh tag
   ```
 
-  可以通过 `git tag -l | grep last-sync` 查看此记录
+  可以通过 `git show last-sync/snapshot-0` 查看此记录
 
 - 更新外网 A 主机的 git 仓库
 
@@ -132,7 +135,7 @@
     git remote update origin
     ```
 
-    经过此步骤操作后，更新增量数据已落入本地（未检出到本地分支，但 refs/remotes/origin/* 已可以引用到）
+    经过此步骤操作后，更新增量数据已落入本地（未检出到本地分支，但 `refs/remotes/origin/*` 已可以引用到）
 
   - 将增量更新推入镜像仓库
 
