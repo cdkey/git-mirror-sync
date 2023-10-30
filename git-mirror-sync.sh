@@ -83,6 +83,11 @@ function get_synced_tag_name()
     get_synced_tag_commit | sed 's/^[^:]*://'
 }
 
+function check_commit_valid()
+{
+    git rev-parse -q --verify "$1^{commit}" >/dev/null
+}
+
 function diff_inc()
 {
     local file1="${1:-/dev/stdin}"
@@ -183,8 +188,8 @@ function create_inc_bundle()
     local new_tag_list=($(diff_inc <(get_synced_tag_commit) <(get_remote_tag_commit)))
 
     local rev_list=()
-    rev_list+=($(for i in "${synced_branch_list[@]}"; do echo "^${i%:*}"; done))
-    rev_list+=($(for i in "${new_branch_list[@]}"; do echo "${i#*:}"; done))
+    rev_list+=($(for i in "${synced_branch_list[@]}"; do check_commit_valid "${i%:*}" && echo "^${i%:*}"; done))
+    rev_list+=($(for i in "${new_branch_list[@]}"; do check_commit_valid "${i%:*}" && echo "${i#*:}"; done))
     rev_list+=($(for i in "${new_tag_list[@]}"; do echo "tags/${i#*:}"; done))
     rev_list+=("$@")
     local cmd="git bundle create ${bundle_file} ${rev_list[@]}"
