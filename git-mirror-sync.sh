@@ -65,13 +65,15 @@ function get_remote_tag_commit()
     [ -n "$G_REMOTE_TAG_COMMIT_CACHE" ] && { echo "$G_REMOTE_TAG_COMMIT_CACHE"; return; }
     #realtime remote tags
     local remote_tags_name
-    remote_tags_name=($(git ls-remote --refs --tags "${REMOTE}" | grep -v '\trefs/tags/last-sync/' | sed 's,.*\trefs/tags/,,' | grep -v '^$'; exit ${PIPESTATUS[0]}))
+    remote_tags_name="$(git ls-remote --refs --tags "${REMOTE}" | grep -v '\trefs/tags/last-sync/' | sed 's,.*\trefs/tags/,,' | grep -v '^$' | sort -u; exit "${PIPESTATUS[0]}")"
     [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
-    local local_remote_tags
-    local_remote_tags=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$'; exit ${PIPESTATUS[0]}))
+    local local_tags_commit
+    local_tags_commit="$(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$'; exit "${PIPESTATUS[0]}")"
     [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
-    local filter_rule="$(printf ":%s\$|" "${remote_tags_name[@]}")"
-    G_REMOTE_TAG_COMMIT_CACHE="$(printf "%s\n" "${local_remote_tags[@]}" | grep -E "${filter_rule%|}")"
+    local local_tags_name="$(echo "$local_tags_commit" | sed 's/^.*://' | sort -u)"
+    local exclude_tags_name=($(diff_inc <(echo "$remote_tags_name") <(echo "$local_tags_name")))
+    local filter_out_rule="$(printf ":%s\$|" "${exclude_tags_name[@]}")"
+    G_REMOTE_TAG_COMMIT_CACHE="$(printf "%s\n" "${local_tags_commit[@]}" | grep -vE "${filter_out_rule%|}")"
     echo "$G_REMOTE_TAG_COMMIT_CACHE" | grep -v '^$'
 }
 
