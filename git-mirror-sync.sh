@@ -20,9 +20,16 @@ SNAP_ID="${GMS_ID:-0}"
 SNAP_TAG="last-sync/snapshot"
 SNAP_MAX=10
 
+function die()
+{
+    echo "Error: $1"
+    [ "$#" -gt 1 ] && exit "$2"
+}
+
 function get_remote_branch_name()
 {
     git branch -r | grep -v '\->' | grep "^ *${REMOTE}/" | sed 's,^ *,,' | grep -v '^$'
+    [ "${PIPESTATUS[0]}" -ne 0 ] && die "${FUNCNAME}" 1
 }
 
 # Output Format:
@@ -31,6 +38,7 @@ function get_remote_branch_name()
 function get_remote_branch_commit()
 {
     git branch -r --format="%(objectname):%(refname:short)" --sort="-committerdate" | grep ":${REMOTE}/" | grep -v ":${REMOTE}/HEAD\$"
+    [ "${PIPESTATUS[0]}" -ne 0 ] && die "${FUNCNAME}" 1
 }
 
 # Output Format:
@@ -56,8 +64,12 @@ function get_remote_tag_commit()
 {
     [ -n "$G_REMOTE_TAG_COMMIT_CACHE" ] && { echo "$G_REMOTE_TAG_COMMIT_CACHE"; return; }
     #realtime remote tags
-    local remote_tags_name=($(git ls-remote --refs --tags "${REMOTE}" | grep -v '\trefs/tags/last-sync/' | sed 's,.*\trefs/tags/,,' | grep -v '^$'))
-    local local_remote_tags=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$'))
+    local remote_tags_name
+    remote_tags_name=($(git ls-remote --refs --tags "${REMOTE}" | grep -v '\trefs/tags/last-sync/' | sed 's,.*\trefs/tags/,,' | grep -v '^$'; exit ${PIPESTATUS[0]}))
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
+    local local_remote_tags
+    local_remote_tags=($(git show-ref --tags | grep -v ' refs/tags/last-sync/' | sed 's, refs/tags/,:,g' | grep -v '^$'; exit ${PIPESTATUS[0]}))
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
     local filter_rule="$(printf ":%s\$|" "${remote_tags_name[@]}")"
     G_REMOTE_TAG_COMMIT_CACHE="$(printf "%s\n" "${local_remote_tags[@]}" | grep -E "${filter_rule%|}")"
     echo "$G_REMOTE_TAG_COMMIT_CACHE" | grep -v '^$'
@@ -66,6 +78,7 @@ function get_remote_tag_commit()
 function get_remote_tag_name()
 {
     get_remote_tag_commit | sed 's/^[^:]*://'
+    [ "${PIPESTATUS[0]}" -ne 0 ] && die "${FUNCNAME}" 1
 }
 
 # Output Format:
@@ -128,7 +141,9 @@ function tag_last_sync()
     last_commit_date="$(git show -s --format="%ci" $(head -n1 <<<"${remote_commit_branch}" | awk -F: '{print $2}'))"
 
     remote_commit_tag="$(get_remote_tag_commit | sed 's/^/t:/')"
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
     synced_commit_tag="$(get_synced_tag_commit | sed 's/^/t:/')"
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
 
     if [ "$with_old" -ne 0 ]; then
         old_name_list=($(diff_inc <(get_remote_branch_name) <(get_synced_branch_name)))
@@ -163,8 +178,12 @@ function create_full_bundle()
     local bundle_file="$1"
     shift
     [ -z "$bundle_file" ] && help
-    local rev_list=($(get_remote_branch_name))
-    local tag_name_list=($(get_remote_tag_name))
+    local rev_list
+    rev_list=($(get_remote_branch_name))
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
+    local tag_name_list
+    tag_name_list=($(get_remote_tag_name))
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
     if [ "${#tag_name_list[@]}" -gt 0 ]; then
         rev_list+=($(printf "tags/%s\n" "${tag_name_list[@]}"))
     fi
@@ -185,7 +204,12 @@ function create_inc_bundle()
     local remote_branch_list=($(get_remote_branch_commit))
     local synced_branch_list=($(get_synced_branch_commit))
     local new_branch_list=($(diff_inc <(printf "%s\n" "${synced_branch_list[@]}") <(printf "%s\n" "${remote_branch_list[@]}")))
-    local new_tag_list=($(diff_inc <(get_synced_tag_commit) <(get_remote_tag_commit)))
+    local synced_tags remote_tags
+    synced_tags="$(get_synced_tag_commit)"
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
+    remote_tags="$(get_remote_tag_commit)"
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
+    local new_tag_list=($(diff_inc <(echo "$synced_tags") <(echo "$remote_tags")))
 
     local rev_list=()
     rev_list+=($(for i in "${synced_branch_list[@]}"; do check_commit_valid "${i%:*}" && echo "^${i%:*}"; done))
@@ -210,7 +234,8 @@ function export_position()
     remote_commit_branch="$(get_remote_branch_commit | sed 's/^/b:/')"
     last_commit_date="$(git show -s --format="%ci" $(head -n1 <<<"${remote_commit_branch}" | awk -F: '{print $2}'))"
 
-    remote_commit_tag="$(get_remote_tag_commit | sed 's/^/t:/')"
+    remote_commit_tag="$(get_remote_tag_commit | sed 's/^/t:/'; exit ${PIPESTATUS[0]})"
+    [ $? -ne 0 ] && die "${FUNCNAME}" 1
 
     printf "%s\n---\n%s\n---\n%s\n"  "$last_commit_date" "$remote_commit_branch" "$remote_commit_tag"
 }
@@ -249,6 +274,7 @@ function do_list_tags()
 {
     echo "Remote ${REMOTE} tags:"
     get_remote_tag_commit
+    [ "$?" -ne 0 ] && die "${FUNCNAME}" 1
 
     echo ""
 
